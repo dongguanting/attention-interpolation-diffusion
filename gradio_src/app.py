@@ -6,10 +6,10 @@ import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
-from pipeline_interpolated_stable_diffusion import InterpolationStableDiffusionPipeline
-from scipy.stats import beta as beta_distribution
 
+from pipeline_interpolated_sd import InterpolationStableDiffusionPipeline
 from pipeline_interpolated_sdxl import InterpolationStableDiffusionXLPipeline
+from prior import BetaPriorPipeline
 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -21,11 +21,13 @@ title = r"""
 description = r"""
 <b>Official 🤗 Gradio demo</b> for <a href='https://github.com/QY-H00/attention-interpolation-diffusion/tree/public' target='_blank'><b>PAID: (Prompt-guided) Attention Interpolation of Text-to-Image Diffusion</b></a>.<br>
 How to use:<br>
-1. Input prompt 1 and prompt 2.
-2. (Optional) Input the guidance prompt and negative prompt.
-3. (Optional) Change the interpolation parameters and check the Beta distribution.
-4. Click the <b>Generate</b> button to begin generating images.
-5. Enjoy! 😊"""
+1. Input prompt 1, prompt 2 and negative prompt.
+2. For <b> Compositional Generation </b> Input the guidance prompt and choose the one you are satisfied!
+3. For <b> Image morphing </b> Input the image prompt 1 and image prompt 2, and choose IP-Adapter.
+4. For <b> Scale Control </b> Input the same text for prompt 1 and prompt 2, leave image prompt 1 blank and upload image prompt 2. Then choose IP-Adapter or IP-Composition-Adapter.
+5. <b> Note that the time required for the SD-series with an exploration size of 10 is around 120 seconds. XL-series with an exploration size 5 is around 5 minutes 30 seconds. </b>
+6. Click the <b>Generate</b> button to begin generating images.
+7. Enjoy! 😊"""
 
 article = r"""
 ---
@@ -33,13 +35,11 @@ article = r"""
 <br>
 If you found this demo/our paper useful, please consider citing:
 ```bibtex
-@misc{he2024aid,
-      title={AID: Attention Interpolation of Text-to-Image Diffusion},
-      author={Qiyuan He and Jinghao Wang and Ziwei Liu and Angela Yao},
-      year={2024},
-      eprint={2403.17924},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
+@article{he2024aid,
+  title={AID: Attention Interpolation of Text-to-Image Diffusion},
+  author={He, Qiyuan and Wang, Jinghao and Liu, Ziwei and Yao, Angela},
+  journal={arXiv preprint arXiv:2403.17924},
+  year={2024}
 }
 ```
 📧 **Contact**
@@ -54,37 +54,54 @@ ENABLE_CPU_OFFLOAD = os.getenv("ENABLE_CPU_OFFLOAD") == "1"
 PREVIEW_IMAGES = False
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-pipeline = InterpolationStableDiffusionPipeline(
-    repo_name="runwayml/stable-diffusion-v1-5",
-    guidance_scale=10.0,
-    scheduler_name="unipc",
+pipeline = InterpolationStableDiffusionPipeline.from_pretrained(
+    "SG161222/Realistic_Vision_V4.0_noVAE",
+    torch_dtype=torch.float16
 )
-pipeline.to(device, dtype=torch.float32)
+pipeline.to(device, dtype=torch.float16)
 
 
 def change_model_fn(model_name: str) -> None:
     global device
     name_mapping = {
-        "SD1.4-521": "CompVis/stable-diffusion-v1-4",
+        "AOM3": "hogiahien/aom3",
+        "SD1.5-512": "stable-diffusion-v1-5/stable-diffusion-v1-5",
         "SD2.1-768": "stabilityai/stable-diffusion-2-1",
+        "RealVis-v4.0": "SG161222/Realistic_Vision_V4.0_noVAE",
         "SDXL-1024": "stabilityai/stable-diffusion-xl-base-1.0",
+        "Playground-XL-v2": "playgroundai/playground-v2.5-1024px-aesthetic",
+        "Juggernaut-XL-v9": "RunDiffusion/Juggernaut-XL-v9"
     }
-    if "XL" not in model_name:
-        globals()["pipeline"] = InterpolationStableDiffusionPipeline(
-            repo_name=name_mapping[model_name],
-            guidance_scale=10.0,
-            scheduler_name="unipc",
-        )
-        globals()["pipeline"].to(device, dtype=torch.float32)
-    else:
-        if device == torch.device("cpu"):
-            dtype = torch.float32
-        else:
+    if device == torch.device("cpu"):
             dtype = torch.float16
+    else:
+        dtype = torch.float16
+    if "XL" not in model_name:
+        globals()["pipeline"] = InterpolationStableDiffusionPipeline.from_pretrained(
+            name_mapping[model_name], torch_dtype=dtype
+        )
+        globals()["pipeline"].to(device, dtype=torch.float16)
+    else:
         globals()["pipeline"] = InterpolationStableDiffusionXLPipeline.from_pretrained(
             name_mapping[model_name], torch_dtype=dtype
         )
         globals()["pipeline"].to(device)
+
+
+def change_adapter_fn(adapter_name: str) -> None:
+    global pipeline
+    if adapter_name == "IP-Adapter":
+        if isinstance(pipeline, InterpolationStableDiffusionPipeline):
+            pipeline.load_aid_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin")
+        else:
+            pipeline.load_aid_ip_adapter("ozzygt/sdxl-ip-adapter", "", weight_name="ip-adapter-plus_sdxl_vit-h.safetensors")
+    elif adapter_name == "IP-Composition-Adapter":
+        if isinstance(pipeline, InterpolationStableDiffusionPipeline):
+            pipeline.load_aid_ip_adapter("ostris/ip-composition-adapter", subfolder="", weight_name="ip_plus_composition_sd15.safetensors")
+        else:
+            pipeline.load_aid_ip_adapter("ozzygt/sdxl-ip-adapter", subfolder="", weight_name="ip_plus_composition_sdxl.safetensors")
+    else:
+        pipeline.load_aid()
 
 
 def save_image(img, index):
@@ -94,94 +111,122 @@ def save_image(img, index):
     return unique_name
 
 
-def generate_beta_tensor(
-    size: int, alpha: float = 3.0, beta: float = 3.0
-) -> torch.FloatTensor:
-    prob_values = [i / (size - 1) for i in range(size)]
-    inverse_cdf_values = beta_distribution.ppf(prob_values, alpha, beta)
-    return inverse_cdf_values
-
-
-def plot_gemma_fn(alpha: float, beta: float, size: int) -> pd.DataFrame:
-    beta_ppf = generate_beta_tensor(size=size, alpha=int(alpha), beta=int(beta))
-    return pd.DataFrame(
-        {
-            "interpolation index": list(range(size)),
-            "coefficient": beta_ppf.tolist(),
-        }
-    )
-
-
-def get_example() -> list[list[str | float | int]]:
+def get_example() -> list[list[str | float | int ]]:
     case = [
         [
-            "A photo of dog, best quality, extremely detailed",
-            "A photo of car, best quality, extremely detailed",
-            3,
-            6,
-            3,
-            "A car with dog furry texture, best quality, extremely detailed",
-            "monochrome, lowres, bad anatomy, worst quality, low quality",
-            "SD1.5-512",
-            6.1 / 50,
-            10,
+            "A statue",
+            "A dragon",
+            "nsfw, lowres, (bad), text, error, fewer, extra, missing, worst quality, jpeg artifacts, low quality, watermark, unfinished, displeasing, oldest, early, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract]",
+            "",
+            None,
+            None,
             50,
-            "fused_inner",
-            "self",
-            1002,
+            10,
+            5,
+            5.0,
+            0.5,
+            "RealVis-v4.0",
+            "None",
+            0,
             True,
         ],
         [
-            "A photo of dog, best quality, extremely detailed",
-            "A photo of car, best quality, extremely detailed",
-            7,
-            8,
-            8,
-            "A toy named dog-car, best quality, extremely detailed",
-            "monochrome, lowres, bad anatomy, worst quality, low quality",
-            "SD1.5-512",
-            8.1 / 50,
-            10,
+            "A photo of a statue",
+            "Het meisje met de parel, by Vermeer",
+            "nsfw, lowres, (bad), text, error, fewer, extra, missing, worst quality, jpeg artifacts, low quality, watermark, unfinished, displeasing, oldest, early, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract]",
+            "",
+            Image.open("asset/statue.jpg"),
+            Image.open("asset/vermeer.jpg"),
             50,
-            "fused_inner",
-            "self",
-            1002,
+            10,
+            5,
+            5.0,
+            0.5,
+            "RealVis-v4.0",
+            "IP-Adapter",
+            0,
             True,
         ],
         [
-            "anime artwork a Pikachu sitting on the grass, dramatic, anime style, key visual, vibrant, studio anime, highly detailed",
-            "anime artwork a beautiful girl, dramatic, anime style, key visual, vibrant, studio anime, highly detailed",
-            7,
-            10,
-            6,
+            "A boy is smiling",
+            "A boy is smiling",
+            "nsfw, lowres, (bad), text, error, fewer, extra, missing, worst quality, jpeg artifacts, low quality, watermark, unfinished, displeasing, oldest, early, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract]",
+            "",
             None,
-            "photo, photorealistic, realism, ugly, messy background",
-            "SDXL-1024",
-            25 / 50,
-            10,
+            Image.open("asset/vermeer.jpg"),
             50,
-            "fused_outer",
-            "self",
-            1002,
-            False,
+            10,
+            5,
+            5.0,
+            0.5,
+            "RealVis-v4.0",
+            "IP-Composition-Adapter",
+            0,
+            True,
         ],
         [
-            "vaporwave synthwave style Los Angeles street. cyberpunk, neon, vibes, stunningly beautiful, crisp, detailed, sleek, ultramodern, high contrast, cinematic composition",
-            "cinematic film still, stormtrooper taking aim. shallow depth of field, vignette, highly detailed, high budget Hollywood movie, bokeh, cinemascope, moody, epic, gorgeous, film grain, grainyCopied!",
-            7,
-            530,
-            602,
+            "masterpiece, best quality, very aesthetic, absurdres, A dog",
+            "masterpiece, best quality, very aesthetic, absurdres, A car",
+            "nsfw, lowres, (bad), text, error, fewer, extra, missing, worst quality, jpeg artifacts, low quality, watermark, unfinished, displeasing, oldest, early, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract]",
+            "masterpiece, best quality, very aesthetic, absurdres, the toy, named 'Dog-Car', is designed as a dog figure with car wheels instead of feet",
             None,
-            "photo, photorealistic, realism, ugly, messy background",
-            "SDXL-1024",
-            25 / 50,
-            10,
+            None,
             50,
-            "fused_outer",
-            "self",
+            5,
+            5,
+            5.0,
+            0.5,
+            "RealVis-v4.0",
+            "None",
             1002,
-            False,
+            True
         ],
+        [
+            "masterpiece, best quality, very aesthetic, absurdres, A dog",
+            "masterpiece, best quality, very aesthetic, absurdres, A car",
+            "nsfw, lowres, (bad), text, error, fewer, extra, missing, worst quality, jpeg artifacts, low quality, watermark, unfinished, displeasing, oldest, early, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract]",
+            "masterpiece, best quality, very aesthetic, absurdres, a dog is driving a car",
+            None,
+            None,
+            28,
+            5,
+            5,
+            5.0,
+            0.5,
+            "Playground-XL-v2",
+            "None",
+            1002,
+            True
+        ]
+        # [
+        #     "masterpiece, best quality, very aesthetic, absurdres, A cat is smiling, face portrait",
+        #     "masterpiece, best quality, very aesthetic, absurdres, A beautiful lady, face portrait",
+        #     "nsfw, lowres, (bad), text, error, fewer, extra, missing, worst quality, jpeg artifacts, low quality, watermark, unfinished, displeasing, oldest, early, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract]",
+        #     None,
+        #     None,
+        #     None,
+        #     28,
+        #     7,
+        #     5,
+        #     5.0,
+        #     1.0,
+        #     "Playground-XL-v2"
+        # ],
+        # [
+        #     "masterpiece, best quality, very aesthetic, absurdres, A dog",
+        #     "masterpiece, best quality, very aesthetic, absurdres, A car",
+        #     "nsfw, lowres, (bad), text, error, fewer, extra, missing, worst quality, jpeg artifacts, low quality, watermark, unfinished, displeasing, oldest, early, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract]",
+        #     "masterpiece, best quality, very aesthetic, absurdres, the toy, named 'Dog-Car', is designed as a dog figure with car wheels instead of feet",
+        #     None,
+        #     None,
+        #     28,
+        #     5,
+        #     5,
+        #     5.0,
+        #     0.5,
+        #     "Playground-XL-v2"
+        # ],
+
     ]
     return case
 
@@ -201,72 +246,81 @@ def dynamic_gallery_fn(interpolation_size: int):
 
 @torch.no_grad()
 def generate(
-    prompt1: str,
-    prompt2: str,
-    guidance_prompt: Optional[str] = None,
-    negative_prompt: str = "",
-    warmup_ratio: int = 8,
-    guidance_scale: float = 10,
-    early: str = "fused_outer",
-    late: str = "self",
-    alpha: float = 4.0,
-    beta: float = 4.0,
-    interpolation_size: int = 3,
-    seed: int = 0,
-    same_latent: bool = True,
-    num_inference_steps: int = 50,
-    progress=gr.Progress(),
+    prompt1,
+    prompt2,
+    negative_prompt,
+    guide_prompt=None,
+    image_prompt1=None,
+    image_prompt2=None,
+    num_inference_steps=28,
+    exploration_size=16,
+    interpolation_size=7,
+    guidance_scale=5.0,
+    warmup_ratio=0.5,
+    seed=0,
+    same_latent=True,
 ) -> np.ndarray:
     global pipeline
+    global adapter_choice
+    beta_pipe = BetaPriorPipeline(pipeline)
+    if guide_prompt == "":
+        guide_prompt = None
     generator = (
         torch.cuda.manual_seed(seed)
         if torch.cuda.is_available()
         else torch.manual_seed(seed)
     )
-    latent1 = pipeline.generate_latent(generator=generator)
-    latent1 = latent1.to(device=pipeline.unet.device, dtype=pipeline.unet.dtype)
+    size = pipeline.unet.config.sample_size
+    latent1 = torch.randn((1, 4, size, size,), device="cuda", dtype=pipeline.unet.dtype, generator=generator)
     if same_latent:
         latent2 = latent1.clone()
     else:
-        latent2 = pipeline.generate_latent(generator=generator)
-        latent2 = latent2.to(device=pipeline.unet.device, dtype=pipeline.unet.dtype)
-    betas = generate_beta_tensor(size=interpolation_size, alpha=alpha, beta=beta)
-    for i in progress.tqdm(
-        range(interpolation_size - 2),
-        desc=(
-            f"Generating {interpolation_size-2} images"
-            if interpolation_size > 3
-            else "Generating 1 image"
-        ),
-    ):
-        it = betas[i + 1].item()
-        images = pipeline.interpolate_single(
-            it,
-            latent_start=latent1,
-            latent_end=latent2,
-            prompt_start=prompt1,
-            prompt_end=prompt2,
-            guide_prompt=guidance_prompt,
-            num_inference_steps=num_inference_steps,
-            warmup_ratio=warmup_ratio,
-            early=early,
-            late=late,
-            negative_prompt=negative_prompt,
-            guidance_scale=guidance_scale,
-        )
-        if hasattr(images, "images"):
-            # for sdxl
-            images = np.array(images.images)
-        if interpolation_size == 3:
-            final_images = images
-            break
-        if i == 0:
-            final_images = images[:2]
-        elif i == interpolation_size - 3:
-            final_images = np.concatenate([final_images, images[1:]], axis=0)
-        else:
-            final_images = np.concatenate([final_images, images[1:2]], axis=0)
-    return final_images
+        latent2 = torch.randn((1, 4, size, size,), device="cuda", dtype=pipeline.unet.dtype, generator=generator)
+
+    if image_prompt1 is None and image_prompt2 is None:
+        pipeline.load_aid()
+    elif (image_prompt1 is None and image_prompt2 is not None):
+        if adapter_choice.value == "IP-Adapter":
+            if isinstance(pipeline, InterpolationStableDiffusionPipeline):
+                pipeline.load_aid_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin")
+            else:
+                pipeline.load_aid_ip_adapter("ozzygt/sdxl-ip-adapter", "", weight_name="ip-adapter-plus_sdxl_vit-h.safetensors")
+        elif adapter_choice.value == "IP-Composition-Adapter":
+            if isinstance(pipeline, InterpolationStableDiffusionPipeline):
+                pipeline.load_aid_ip_adapter("ostris/ip-composition-adapter", subfolder="", weight_name="ip_plus_composition_sd15.safetensors")
+            else:
+                pipeline.load_aid_ip_adapter("ozzygt/sdxl-ip-adapter", subfolder="", weight_name="ip_plus_composition_sdxl.safetensors")
+    elif (image_prompt1 is None and image_prompt2 is not None):
+        if adapter_choice.value == "IP-Adapter":
+            if isinstance(pipeline, InterpolationStableDiffusionPipeline):
+                pipeline.load_aid_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin", early="scale_control")
+            else:
+                pipeline.load_aid_ip_adapter("ozzygt/sdxl-ip-adapter", "", weight_name="ip-adapter-plus_sdxl_vit-h.safetensors", early="scale_control")
+        elif adapter_choice.value == "IP-Composition-Adapter":
+            if isinstance(pipeline, InterpolationStableDiffusionPipeline):
+                pipeline.load_aid_ip_adapter("ostris/ip-composition-adapter", subfolder="", weight_name="ip_plus_composition_sd15.safetensors", early="scale_control")
+            else:
+                pipeline.load_aid_ip_adapter("ozzygt/sdxl-ip-adapter", subfolder="", weight_name="ip_plus_composition_sdxl.safetensors", early="scale_control")
+    else:
+        raise ValueError("To use scale control, please provide only the right image; To use image morphing, please provide images from both side.")
+    images = beta_pipe.generate_interpolation(
+        gr.Progress(),
+        prompt1,
+        prompt2,
+        negative_prompt,
+        latent1,
+        latent2,
+        num_inference_steps,
+        image_start=image_prompt1,
+        image_end=image_prompt2,
+        exploration_size=exploration_size,
+        interpolation_size=interpolation_size,
+        output_type="np",
+        guide_prompt=guide_prompt,
+        guidance_scale=guidance_scale,
+        warmup_ratio=warmup_ratio
+    )
+    return images
 
 
 interpolation_size = None
@@ -274,23 +328,63 @@ interpolation_size = None
 with gr.Blocks(css="style.css") as demo:
     gr.Markdown(title)
     gr.Markdown(description)
+    with gr.Row(elem_classes="grid-container"):
+        with gr.Group():
+            with gr.Column(elem_classes="grid-item"):  # 左侧列
+                prompt1 = gr.Text(
+                    label="Prompt 1",
+                    max_lines=3,
+                    placeholder="Enter the First Prompt",
+                    interactive=True,
+                    value="A photo of a cat",
+                )
+                prompt2 = gr.Text(
+                    label="Prompt 2",
+                    max_lines=3,
+                    placeholder="Enter the Second Prompt",
+                    interactive=True,
+                    value="A photo of a beautiful lady",
+                )
+                negative_prompt = gr.Text(
+                    label="Negative prompt",
+                    max_lines=3,
+                    placeholder="Enter a Negative Prompt",
+                    interactive=True,
+                    value="nsfw, lowres, (bad), text, error, fewer, extra, missing, worst quality, jpeg artifacts, low quality, watermark, unfinished, displeasing, oldest, early, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract]",
+                )
+                guidance_prompt = gr.Text(
+                    label="Guidance prompt (Optional)",
+                    max_lines=3,
+                    placeholder="Enter a Guidance Prompt",
+                    interactive=True,
+                    value="",
+                )
+
+        with gr.Group():
+            with gr.Column(elem_classes="grid-item"):  # 右侧列
+                with gr.Row(elem_classes="flex-grow"):
+                    image_prompt1 = gr.Image(label="Image Prompt 1 (Optional)", interactive=True, height=236, width=235)
+                    image_prompt2 = gr.Image(label="Image Prompt 2 (Optional)", interactive=True, height=236, width=235)
+                with gr.Row(elem_classes="flex-grow"):
+                    model_choice = gr.Dropdown(
+                        ["RealVis-v4.0", "SD1.4-512", "SD1.5-512", "SD2.1-768", "AOM3", "SDXL-1024", "Playground-XL-v2", "Juggernaut-XL-v9"],
+                        label="Model",
+                        value="RealVis-v4.0",
+                        interactive=True,
+                        info="All series are running on float16; SD2.1 does not support IP-Adapter; XL-Series takes longer time",
+                    )
+                    adapter_choice = gr.Dropdown(
+                        ["None", "IP-Adapter", "IP-Composition-Adapter"],
+                        label="IP-Adapter",
+                        value="None",
+                        interactive=True,
+                        info="Only set to IP-Adapter or IP-Composition-Adapter when using image prompt",
+                    )
+
     with gr.Group():
-        prompt1 = gr.Text(
-            label="Prompt 1",
-            max_lines=3,
-            placeholder="Enter the First Prompt",
-            interactive=True,
-            value="A photo of dog, best quality, extremely detailed",
-        )
-        prompt2 = gr.Text(
-            label="Prompt 2",
-            max_lines=3,
-            placeholder="Enter the Second prompt",
-            interactive=True,
-            value="A photo of car, best quality, extremely detaile",
-        )
         result = gr.Gallery(label="Result", show_label=False, rows=1, columns=3)
-    generate_button = gr.Button(value="Generate", variant="primary")
+        generate_button = gr.Button(value="Generate", variant="primary")
+
     with gr.Accordion("Advanced options", open=True):
         with gr.Group():
             with gr.Row():
@@ -298,60 +392,19 @@ with gr.Blocks(css="style.css") as demo:
                     interpolation_size = gr.Slider(
                         label="Interpolation Size",
                         minimum=3,
-                        maximum=15,
+                        maximum=7,
                         step=1,
-                        value=3,
+                        value=5,
                         info="Interpolation size includes the start and end images",
                     )
-                    alpha = gr.Slider(
-                        label="alpha",
-                        minimum=1,
-                        maximum=50,
+                    exploration_size = gr.Slider(
+                        label="Exploration Size",
+                        minimum=7,
+                        maximum=16,
                         step=1,
-                        value=6.0,
+                        value=10,
+                        info="Exploration size has to be larger than interpolation size",
                     )
-                    beta = gr.Slider(
-                        label="beta",
-                        minimum=1,
-                        maximum=50,
-                        step=1,
-                        value=3.0,
-                    )
-                gamma_plot = gr.LinePlot(
-                    x="interpolation index",
-                    y="coefficient",
-                    title="Beta Distribution with Sampled Points",
-                    height=500,
-                    width=400,
-                    overlay_point=True,
-                    tooltip=["coefficient", "interpolation index"],
-                    interactive=False,
-                    show_label=False,
-                )
-                gamma_plot.change(
-                    plot_gemma_fn,
-                    inputs=[
-                        alpha,
-                        beta,
-                        interpolation_size,
-                    ],
-                    outputs=gamma_plot,
-                )
-        with gr.Group():
-            guidance_prompt = gr.Text(
-                label="Guidance prompt",
-                max_lines=3,
-                placeholder="Enter a Guidance Prompt",
-                interactive=True,
-                value="A photo of a dog driving a car, logical, best quality, extremely detailed",
-            )
-            negative_prompt = gr.Text(
-                label="Negative prompt",
-                max_lines=3,
-                placeholder="Enter a Negative Prompt",
-                interactive=True,
-                value="monochrome, lowres, bad anatomy, worst quality, low quality",
-            )
         with gr.Row():
             with gr.Column():
                 warmup_ratio = gr.Slider(
@@ -359,42 +412,15 @@ with gr.Blocks(css="style.css") as demo:
                     minimum=0.02,
                     maximum=1,
                     step=0.01,
-                    value=0.122,
+                    value=0.5,
                     interactive=True,
                 )
                 guidance_scale = gr.Slider(
                     label="Guidance Scale",
                     minimum=0,
-                    maximum=50,
+                    maximum=20,
                     step=0.1,
-                    value=10,
-                    interactive=True,
-                )
-            with gr.Column():
-                early = gr.Dropdown(
-                    label="Early stage attention type",
-                    choices=[
-                        "pure_inner",
-                        "fused_inner",
-                        "pure_outer",
-                        "fused_outer",
-                        "self",
-                    ],
-                    value="fused_outer",
-                    type="value",
-                    interactive=True,
-                )
-                late = gr.Dropdown(
-                    label="Late stage attention type",
-                    choices=[
-                        "pure_inner",
-                        "fused_inner",
-                        "pure_outer",
-                        "fused_outer",
-                        "self",
-                    ],
-                    value="self",
-                    type="value",
+                    value=5.0,
                     interactive=True,
                 )
         num_inference_steps = gr.Slider(
@@ -405,60 +431,43 @@ with gr.Blocks(css="style.css") as demo:
             value=50,
             interactive=True,
         )
-        with gr.Row():
-            model_choice = gr.Dropdown(
-                ["SD1.4-521", "SD1.5-512", "SD2.1-768", "SDXL-1024"],
-                label="Model",
-                value="SD1.5-512",
-                interactive=True,
-                info="SDXL will run on float16 while the rest will run on float32.",
+        with gr.Column():
+            seed = gr.Slider(
+                label="Seed",
+                minimum=0,
+                maximum=MAX_SEED,
+                step=1,
+                value=0,
             )
-            with gr.Column():
-                seed = gr.Slider(
-                    label="Seed",
-                    minimum=0,
-                    maximum=MAX_SEED,
-                    step=1,
-                    value=1002,
-                )
-                same_latent = gr.Checkbox(
-                    label="Same latent",
-                    value=True,
-                    info="Use the same latent for start and end images",
-                    show_label=True,
-                )
+            same_latent = gr.Checkbox(
+                label="Same latent",
+                value=False,
+                info="Use the same latent for start and end images",
+                show_label=True,
+            )
 
     gr.Examples(
         examples=get_example(),
         inputs=[
             prompt1,
             prompt2,
-            interpolation_size,
-            alpha,
-            beta,
-            guidance_prompt,
             negative_prompt,
-            model_choice,
-            warmup_ratio,
-            guidance_scale,
+            guidance_prompt,
+            image_prompt1,
+            image_prompt2,
             num_inference_steps,
-            early,
-            late,
+            exploration_size,
+            interpolation_size,
+            guidance_scale,
+            warmup_ratio,
+            model_choice,
+            adapter_choice,
             seed,
             same_latent,
         ],
         cache_examples=CACHE_EXAMPLES,
     )
 
-    alpha.change(
-        fn=plot_gemma_fn, inputs=[alpha, beta, interpolation_size], outputs=gamma_plot
-    )
-    beta.change(
-        fn=plot_gemma_fn, inputs=[alpha, beta, interpolation_size], outputs=gamma_plot
-    )
-    interpolation_size.change(
-        fn=plot_gemma_fn, inputs=[alpha, beta, interpolation_size], outputs=gamma_plot
-    )
     model_choice.change(
         fn=change_generate_button_fn,
         inputs=gr.Number(0, visible=False),
@@ -468,21 +477,31 @@ with gr.Blocks(css="style.css") as demo:
         inputs=gr.Number(1, visible=False),
         outputs=generate_button,
     )
+
+    adapter_choice.change(
+        fn=change_generate_button_fn,
+        inputs=gr.Number(0, visible=False),
+        outputs=generate_button,
+    ).then(fn=change_adapter_fn, inputs=[adapter_choice]).then(
+        fn=change_generate_button_fn,
+        inputs=gr.Number(1, visible=False),
+        outputs=generate_button,
+    )
+
     inputs = [
         prompt1,
         prompt2,
-        guidance_prompt,
         negative_prompt,
-        warmup_ratio,
-        guidance_scale,
-        early,
-        late,
-        alpha,
-        beta,
+        guidance_prompt,
+        image_prompt1,
+        image_prompt2,
+        num_inference_steps,
+        exploration_size,
         interpolation_size,
+        guidance_scale,
+        warmup_ratio,
         seed,
         same_latent,
-        num_inference_steps,
     ]
     generate_button.click(
         fn=dynamic_gallery_fn,

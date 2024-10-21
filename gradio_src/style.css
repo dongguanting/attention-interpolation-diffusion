@@ -18,6 +18,30 @@ h1 {
     max-width: 690px ! important;
 }
 
+.equal-height {
+    display: flex;
+    flex: 1;
+}
+
+.grid-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;  /* 两列宽度相等 */
+    gap: 20px;
+    height: 100%;  /* 确保容器高度为100% */
+}
+
+.grid-item {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.flex-grow {
+    flex-grow: 1;  /* 使该元素占据剩余的高度 */
+    display: flex;
+    flex-direction: column;
+}
+
 #share-btn-container {
     padding-left: 0.5rem !important;
     padding-right: 0.5rem !important;
