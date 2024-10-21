@@ -10,7 +10,7 @@ NeurIPS 2024 Paper
 
 <div align="center">
 <a href=https://arxiv.org/abs/2403.17924 target="_blank"><img src=https://img.shields.io/badge/arXiv-b5212f.svg?logo=arxiv height=25px></a>
-<a href=https://huggingface.co/spaces/king159/PAID target="_blank"><img src=https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face%20Space-276cb4.svg height=25px></a>
+<a href=https://huggingface.co/spaces/qyoo/AID-v2 target="_blank"><img src=https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face%20Space-276cb4.svg height=25px></a>
 <a href=https://colab.research.google.com/drive/1D2myS9UF241gx1otp-fy-LRakMZlROCT?usp=sharing target="_blank"><img src= https://img.shields.io/badge/Google%20Colab-8f2628.svg?logo=googlecolab height=25px></a>
 <a href=https://qy-h00.github.io/attention-interpolation-diffusion target="_blank"><img src= https://img.shields.io/badge/GitHub%20Project%20Page-bb8a2e.svg?logo=github height=25px></a>
 </div>
@@ -31,7 +31,7 @@ NeurIPS 2024 Paper
 </p>
 
 ## 📌 Release
-[10/2024] We are now supporting various application including compositional generation, image morphing, image editing and image-control generation (based on IP-Adapter), try `play_sdxl_application.ipynb` and `play_sd.ipynb` for fun!
+[10/2024] We are now supporting various application including compositional generation, image morphing, image editing and image-control generation (based on IP-Adapter), try `play_sdxl_application.ipynb` and `play_sd.ipynb`. It's also available in our Hugging Face Space [AID-v2](https://huggingface.co/spaces/qyoo/AID-v2). Have fun!
 
 [10/2024] We are now supporting interpolating between images via [IP-Adapter](https://github.com/tencent-ailab/IP-Adapter)!
 
