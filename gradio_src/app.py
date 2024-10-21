@@ -55,8 +55,7 @@ PREVIEW_IMAGES = False
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 pipeline = InterpolationStableDiffusionPipeline.from_pretrained(
-    "SG161222/Realistic_Vision_V4.0_noVAE",
-    torch_dtype=torch.float16
+    "SG161222/Realistic_Vision_V4.0_noVAE", torch_dtype=torch.float16
 )
 pipeline.to(device, dtype=torch.float16)
 
@@ -70,10 +69,10 @@ def change_model_fn(model_name: str) -> None:
         "RealVis-v4.0": "SG161222/Realistic_Vision_V4.0_noVAE",
         "SDXL-1024": "stabilityai/stable-diffusion-xl-base-1.0",
         "Playground-XL-v2": "playgroundai/playground-v2.5-1024px-aesthetic",
-        "Juggernaut-XL-v9": "RunDiffusion/Juggernaut-XL-v9"
+        "Juggernaut-XL-v9": "RunDiffusion/Juggernaut-XL-v9",
     }
     if device == torch.device("cpu"):
-            dtype = torch.float16
+        dtype = torch.float16
     else:
         dtype = torch.float16
     if "XL" not in model_name:
@@ -92,14 +91,28 @@ def change_adapter_fn(adapter_name: str) -> None:
     global pipeline
     if adapter_name == "IP-Adapter":
         if isinstance(pipeline, InterpolationStableDiffusionPipeline):
-            pipeline.load_aid_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin")
+            pipeline.load_aid_ip_adapter(
+                "h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin"
+            )
         else:
-            pipeline.load_aid_ip_adapter("ozzygt/sdxl-ip-adapter", "", weight_name="ip-adapter-plus_sdxl_vit-h.safetensors")
+            pipeline.load_aid_ip_adapter(
+                "ozzygt/sdxl-ip-adapter",
+                "",
+                weight_name="ip-adapter-plus_sdxl_vit-h.safetensors",
+            )
     elif adapter_name == "IP-Composition-Adapter":
         if isinstance(pipeline, InterpolationStableDiffusionPipeline):
-            pipeline.load_aid_ip_adapter("ostris/ip-composition-adapter", subfolder="", weight_name="ip_plus_composition_sd15.safetensors")
+            pipeline.load_aid_ip_adapter(
+                "ostris/ip-composition-adapter",
+                subfolder="",
+                weight_name="ip_plus_composition_sd15.safetensors",
+            )
         else:
-            pipeline.load_aid_ip_adapter("ozzygt/sdxl-ip-adapter", subfolder="", weight_name="ip_plus_composition_sdxl.safetensors")
+            pipeline.load_aid_ip_adapter(
+                "ozzygt/sdxl-ip-adapter",
+                subfolder="",
+                weight_name="ip_plus_composition_sdxl.safetensors",
+            )
     else:
         pipeline.load_aid()
 
@@ -111,7 +124,7 @@ def save_image(img, index):
     return unique_name
 
 
-def get_example() -> list[list[str | float | int ]]:
+def get_example() -> list[list[str | float | int]]:
     case = [
         [
             "A statue",
@@ -179,7 +192,7 @@ def get_example() -> list[list[str | float | int ]]:
             "RealVis-v4.0",
             "None",
             1002,
-            True
+            True,
         ],
         [
             "masterpiece, best quality, very aesthetic, absurdres, A dog",
@@ -196,8 +209,8 @@ def get_example() -> list[list[str | float | int ]]:
             "Playground-XL-v2",
             "None",
             1002,
-            True
-        ]
+            True,
+        ],
         # [
         #     "masterpiece, best quality, very aesthetic, absurdres, A cat is smiling, face portrait",
         #     "masterpiece, best quality, very aesthetic, absurdres, A beautiful lady, face portrait",
@@ -226,7 +239,6 @@ def get_example() -> list[list[str | float | int ]]:
         #     0.5,
         #     "Playground-XL-v2"
         # ],
-
     ]
     return case
 
@@ -271,38 +283,96 @@ def generate(
         else torch.manual_seed(seed)
     )
     size = pipeline.unet.config.sample_size
-    latent1 = torch.randn((1, 4, size, size,), device="cuda", dtype=pipeline.unet.dtype, generator=generator)
+    latent1 = torch.randn(
+        (
+            1,
+            4,
+            size,
+            size,
+        ),
+        device="cuda",
+        dtype=pipeline.unet.dtype,
+        generator=generator,
+    )
     if same_latent:
         latent2 = latent1.clone()
     else:
-        latent2 = torch.randn((1, 4, size, size,), device="cuda", dtype=pipeline.unet.dtype, generator=generator)
+        latent2 = torch.randn(
+            (
+                1,
+                4,
+                size,
+                size,
+            ),
+            device="cuda",
+            dtype=pipeline.unet.dtype,
+            generator=generator,
+        )
 
     if image_prompt1 is None and image_prompt2 is None:
         pipeline.load_aid()
-    elif (image_prompt1 is None and image_prompt2 is not None):
+    elif image_prompt1 is None and image_prompt2 is not None:
         if adapter_choice.value == "IP-Adapter":
             if isinstance(pipeline, InterpolationStableDiffusionPipeline):
-                pipeline.load_aid_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin")
+                pipeline.load_aid_ip_adapter(
+                    "h94/IP-Adapter",
+                    subfolder="models",
+                    weight_name="ip-adapter_sd15.bin",
+                )
             else:
-                pipeline.load_aid_ip_adapter("ozzygt/sdxl-ip-adapter", "", weight_name="ip-adapter-plus_sdxl_vit-h.safetensors")
+                pipeline.load_aid_ip_adapter(
+                    "ozzygt/sdxl-ip-adapter",
+                    "",
+                    weight_name="ip-adapter-plus_sdxl_vit-h.safetensors",
+                )
         elif adapter_choice.value == "IP-Composition-Adapter":
             if isinstance(pipeline, InterpolationStableDiffusionPipeline):
-                pipeline.load_aid_ip_adapter("ostris/ip-composition-adapter", subfolder="", weight_name="ip_plus_composition_sd15.safetensors")
+                pipeline.load_aid_ip_adapter(
+                    "ostris/ip-composition-adapter",
+                    subfolder="",
+                    weight_name="ip_plus_composition_sd15.safetensors",
+                )
             else:
-                pipeline.load_aid_ip_adapter("ozzygt/sdxl-ip-adapter", subfolder="", weight_name="ip_plus_composition_sdxl.safetensors")
-    elif (image_prompt1 is None and image_prompt2 is not None):
+                pipeline.load_aid_ip_adapter(
+                    "ozzygt/sdxl-ip-adapter",
+                    subfolder="",
+                    weight_name="ip_plus_composition_sdxl.safetensors",
+                )
+    elif image_prompt1 is None and image_prompt2 is not None:
         if adapter_choice.value == "IP-Adapter":
             if isinstance(pipeline, InterpolationStableDiffusionPipeline):
-                pipeline.load_aid_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin", early="scale_control")
+                pipeline.load_aid_ip_adapter(
+                    "h94/IP-Adapter",
+                    subfolder="models",
+                    weight_name="ip-adapter_sd15.bin",
+                    early="scale_control",
+                )
             else:
-                pipeline.load_aid_ip_adapter("ozzygt/sdxl-ip-adapter", "", weight_name="ip-adapter-plus_sdxl_vit-h.safetensors", early="scale_control")
+                pipeline.load_aid_ip_adapter(
+                    "ozzygt/sdxl-ip-adapter",
+                    "",
+                    weight_name="ip-adapter-plus_sdxl_vit-h.safetensors",
+                    early="scale_control",
+                )
         elif adapter_choice.value == "IP-Composition-Adapter":
             if isinstance(pipeline, InterpolationStableDiffusionPipeline):
-                pipeline.load_aid_ip_adapter("ostris/ip-composition-adapter", subfolder="", weight_name="ip_plus_composition_sd15.safetensors", early="scale_control")
+                pipeline.load_aid_ip_adapter(
+                    "ostris/ip-composition-adapter",
+                    subfolder="",
+                    weight_name="ip_plus_composition_sd15.safetensors",
+                    early="scale_control",
+                )
             else:
-                pipeline.load_aid_ip_adapter("ozzygt/sdxl-ip-adapter", subfolder="", weight_name="ip_plus_composition_sdxl.safetensors", early="scale_control")
+                pipeline.load_aid_ip_adapter(
+                    "ozzygt/sdxl-ip-adapter",
+                    subfolder="",
+                    weight_name="ip_plus_composition_sdxl.safetensors",
+                    early="scale_control",
+                )
     else:
-        raise ValueError("To use scale control, please provide only the right image; To use image morphing, please provide images from both side.")
+        raise ValueError(
+            "To use scale control, please provide only the right image; To use image morphing, please provide images from both side."
+        )
     images = beta_pipe.generate_interpolation(
         gr.Progress(),
         prompt1,
@@ -318,7 +388,7 @@ def generate(
         output_type="np",
         guide_prompt=guide_prompt,
         guidance_scale=guidance_scale,
-        warmup_ratio=warmup_ratio
+        warmup_ratio=warmup_ratio,
     )
     return images
 
@@ -363,11 +433,30 @@ with gr.Blocks(css="style.css") as demo:
         with gr.Group():
             with gr.Column(elem_classes="grid-item"):  # 右侧列
                 with gr.Row(elem_classes="flex-grow"):
-                    image_prompt1 = gr.Image(label="Image Prompt 1 (Optional)", interactive=True, height=236, width=235)
-                    image_prompt2 = gr.Image(label="Image Prompt 2 (Optional)", interactive=True, height=236, width=235)
+                    image_prompt1 = gr.Image(
+                        label="Image Prompt 1 (Optional)",
+                        interactive=True,
+                        height=236,
+                        width=235,
+                    )
+                    image_prompt2 = gr.Image(
+                        label="Image Prompt 2 (Optional)",
+                        interactive=True,
+                        height=236,
+                        width=235,
+                    )
                 with gr.Row(elem_classes="flex-grow"):
                     model_choice = gr.Dropdown(
-                        ["RealVis-v4.0", "SD1.4-512", "SD1.5-512", "SD2.1-768", "AOM3", "SDXL-1024", "Playground-XL-v2", "Juggernaut-XL-v9"],
+                        [
+                            "RealVis-v4.0",
+                            "SD1.4-512",
+                            "SD1.5-512",
+                            "SD2.1-768",
+                            "AOM3",
+                            "SDXL-1024",
+                            "Playground-XL-v2",
+                            "Juggernaut-XL-v9",
+                        ],
                         label="Model",
                         value="RealVis-v4.0",
                         interactive=True,
